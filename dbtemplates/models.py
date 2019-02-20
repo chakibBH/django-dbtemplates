@@ -10,6 +10,7 @@ from django.db.models import signals
 from django.template import TemplateDoesNotExist
 from django.utils.translation import ugettext_lazy as _
 from django.utils.timezone import now
+import re
 
 
 class Template(models.Model):
@@ -19,6 +20,8 @@ class Template(models.Model):
     """
     name = models.CharField(_('name'), max_length=100,
                             help_text=_("Example: 'flatpages/default.html'"))
+    subject = models.TextField(_('subject'), blank=True)
+    body = models.TextField(_('body'), blank=True)
     content = models.TextField(_('content'), blank=True)
     sites = models.ManyToManyField(Site, verbose_name=_(u'sites'),
                                    blank=True)
@@ -53,12 +56,35 @@ class Template(models.Model):
         except TemplateDoesNotExist:
             pass
 
+    def reload_body_subject(self, body=None, subject=None):
+        """
+        Dans le cas ou body ou subject est manquant
+        au save on essai de le recharger depuis le cache
+        """
+        name = self.name
+        try:
+            source = get_template_source(name)
+            if source:
+                striped = source.replace('\n', '')
+                if not body:
+                    pattern = "{% block html_body %}(?P<req>.*){% endblock html_body %}"
+                    pouet = re.search(pattern, striped, re.MULTILINE)
+                    self.body = pouet.group('req')
+                if not subject:
+                    pattern = "{% block subject %}(?P<req>.*){% endblock subject %}"
+                    pouet = re.search(pattern, striped, re.MULTILINE)
+                    self.subject = pouet.group('req')
+        except TemplateDoesNotExist:
+            pass
+
     def save(self, *args, **kwargs):
         self.last_changed = now()
         # If content is empty look for a template with the given name and
         # populate the template instance with its content.
         if settings.DBTEMPLATES_AUTO_POPULATE_CONTENT and not self.content:
             self.populate()
+        if settings.DBTEMPLATES_AUTO_POPULATE_CONTENT:
+            self.reload_body_subject(self.body, self.subject)
         super(Template, self).save(*args, **kwargs)
 
 

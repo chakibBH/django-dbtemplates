@@ -26,7 +26,7 @@ class CodeMirrorTextArea(forms.Textarea):
     """
     class Media:
         css = dict(screen=[posixpath.join(
-            settings.DBTEMPLATES_MEDIA_PREFIX, 'css/editor.css')])
+            settings.DBTEMPLATES_MEDIA_PREFIX, 'css/paraiso-light.css')])
         js = [posixpath.join(settings.DBTEMPLATES_MEDIA_PREFIX, 'js/codemirror.js')]
 
     def render(self, name, value, attrs=None, renderer=None):
@@ -42,8 +42,9 @@ class CodeMirrorTextArea(forms.Textarea):
     continuousScanning: 500,
     height: "40.2em",
     tabMode: "shift",
-    indentUnit: 4,
-    lineNumbers: true
+    indentUnit: 0,
+    lineNumbers: true,
+    theme: "paraiso-light",
   });
 </script>
 """ % dict(media_prefix=settings.DBTEMPLATES_MEDIA_PREFIX, name=name))
@@ -81,8 +82,9 @@ class TemplateAdminForm(forms.ModelForm):
     Custom AdminForm to make the content textarea wider.
     """
     content = forms.CharField(
-        widget=TemplateContentTextArea(attrs={'rows': '24'}),
-        help_text=content_help_text, required=False)
+        widget=forms.Textarea(attrs={'rows': '20', 'cols': '125'}),
+        help_text="Indique le contenu du gabarit calculé à partir des champs Sujet et Corps",
+        required=False, disabled=True)
 
     class Meta:
         model = Template
@@ -92,6 +94,7 @@ class TemplateAdminForm(forms.ModelForm):
 
 class TemplateAdmin(TemplateModelAdmin):
     form = TemplateAdminForm
+
     fieldsets = (
         (None, {
             'fields': ('name', 'content'),
@@ -106,8 +109,8 @@ class TemplateAdmin(TemplateModelAdmin):
         }),
     )
     filter_horizontal = ('sites',)
-    list_display = ('name', 'creation_date', 'last_changed', 'site_list')
-    list_filter = ('sites',)
+    list_display = ('name', 'creation_date', 'last_changed', )
+    list_filter = ('last_changed',)
     save_as = True
     search_fields = ('name', 'content')
     actions = ['invalidate_cache', 'repopulate_cache', 'check_syntax']
@@ -163,4 +166,71 @@ class TemplateAdmin(TemplateModelAdmin):
     site_list.short_description = _('sites')
 
 
-admin.site.register(Template, TemplateAdmin)
+class CustomTemplateAdminForm(TemplateAdminForm):
+
+    """
+    Custom AdminForm to make the content textarea wider.
+    """
+    subject = forms.CharField(
+        label='Sujet',
+        widget=forms.TextInput(attrs={'size': '50'}),
+        help_text="Aucun formatage html pris en charge. {rel}".format(
+            rel=content_help_text),
+        required=False)
+
+    body = forms.CharField(
+        label='Corps',
+        widget=TemplateContentTextArea(attrs={'rows': '24'}),
+        help_text=content_help_text, required=False)
+
+    class Meta:
+        model = Template
+        fields = ('name', 'subject', 'body', 'sites', 'creation_date', 'last_changed')
+        fields = "__all__"
+
+    def clean_subject(self):
+        subject = self.cleaned_data.get('subject', '')
+        return subject.replace('\n', ' ').replace('\r', ' ')
+
+    def clean_content(self):
+        subject = self.cleaned_data.get('subject', '')
+        body = self.cleaned_data.get('body', None)
+        if not body:
+            return None
+        content = """{bal1}{subject}{bal2}{bal3}{body}{bal4}""".format(
+            bal1="{% block subject %}",
+            bal2="{% endblock subject %}",
+            bal3="{% block html_body %}",
+            bal4="{% endblock html_body %}",
+            subject=subject,
+            body=body
+        )
+
+        return content
+
+    def save(self, *args, **kwargs):
+        return super().save(*args, **kwargs)
+
+
+class CustomTemplateAdmin(TemplateAdmin):
+    form = CustomTemplateAdminForm
+
+    readonly_fields = ('name', 'creation_date', 'last_changed')
+
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'subject', 'body', 'content'),
+            'classes': ('monospace',),
+        }),
+        # (_('Advanced'), {
+        #     'fields': (('sites'),),
+        #     'classes': ('collapse',),
+        # }),
+        (_('Date/time'), {
+            'fields': (('creation_date', 'last_changed'),),
+            'classes': ('collapse',),
+        }),
+    )
+
+
+admin.site.register(Template, CustomTemplateAdmin)
